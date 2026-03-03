@@ -174,23 +174,37 @@ def deskew_and_crop(img):
     return Image.fromarray(img_array), angle
 
 
-def normalize_size(images, bg_color=(255, 255, 255)):
-    """Resize all images to the same dimensions by centering on a white canvas."""
-    max_w = max(img.width for img in images)
-    max_h = max(img.height for img in images)
+def normalize_size(images, target_size=None, bg_color=(255, 255, 255)):
+    """Resize all images to uniform dimensions by centering on a white canvas.
+    If target_size is (w, h), fit each image within that size (preserving aspect
+    ratio) and center on a canvas of exactly that size. Otherwise, use the
+    largest width/height among the images."""
+    if target_size:
+        target_w, target_h = target_size
+    else:
+        target_w = max(img.width for img in images)
+        target_h = max(img.height for img in images)
 
     result = []
     for img in images:
-        if img.width == max_w and img.height == max_h:
+        if target_size and (img.width > target_w or img.height > target_h):
+            # Crop to fit: clip overflow (centered) instead of scaling down,
+            # so document content keeps its original pixel size
+            left = max((img.width - target_w) // 2, 0)
+            top = max((img.height - target_h) // 2, 0)
+            right = left + min(img.width, target_w)
+            bottom = top + min(img.height, target_h)
+            img = img.crop((left, top, right, bottom))
+        if img.width == target_w and img.height == target_h:
             result.append(img)
             continue
-        canvas = Image.new("RGB", (max_w, max_h), bg_color)
-        x = (max_w - img.width) // 2
-        y = (max_h - img.height) // 2
+        canvas = Image.new("RGB", (target_w, target_h), bg_color)
+        x = (target_w - img.width) // 2
+        y = (target_h - img.height) // 2
         canvas.paste(img, (x, y))
         result.append(canvas)
 
-    return result, max_w, max_h
+    return result, target_w, target_h
 
 
 def detect_source_settings(input_path):
@@ -242,7 +256,7 @@ def detect_source_settings(input_path):
     return detected_dpi, detected_quality
 
 
-def process_pdf(input_path, output_path, dpi=300, quality=85):
+def process_pdf(input_path, output_path, dpi=300, quality=85, target_size=None):
     """Process each page: deskew, crop borders, normalize to uniform size."""
     doc = fitz.open(input_path)
 
@@ -263,7 +277,7 @@ def process_pdf(input_path, output_path, dpi=300, quality=85):
               f"cropped to {img.width}x{img.height}")
 
     # Pass 2: normalize all pages to the same size
-    processed, final_w, final_h = normalize_size(processed)
+    processed, final_w, final_h = normalize_size(processed, target_size=target_size)
     print(f"Normalized all pages to {final_w}x{final_h}")
 
     # Pass 3: write to PDF
@@ -284,7 +298,8 @@ def process_pdf(input_path, output_path, dpi=300, quality=85):
     print(f"\nDone! Saved to: {output_path}")
 
 
-def process_folder(input_dir, output_dir, dpi=300, quality=85, keep_original=False):
+def process_folder(input_dir, output_dir, dpi=300, quality=85, keep_original=False,
+                    target_size=None):
     """Process all PDFs in input_dir and save to output_dir."""
     import pathlib
     input_path = pathlib.Path(input_dir)
@@ -304,7 +319,8 @@ def process_folder(input_dir, output_dir, dpi=300, quality=85, keep_original=Fal
         if keep_original:
             file_dpi, file_quality = detect_source_settings(str(pdf))
             print(f"Detected source settings: DPI={file_dpi}, JPEG quality={file_quality}")
-        process_pdf(str(pdf), str(out_file), dpi=file_dpi, quality=file_quality)
+        process_pdf(str(pdf), str(out_file), dpi=file_dpi, quality=file_quality,
+                    target_size=target_size)
         print()
 
 
@@ -318,7 +334,16 @@ if __name__ == "__main__":
     parser.add_argument("--quality", type=int, default=85, help="JPEG quality 1-100 (default: 85)")
     parser.add_argument("--original", action="store_true",
                         help="Auto-detect and keep source DPI and JPEG quality")
+    parser.add_argument("--size", type=str, default=None,
+                        help="Target image size as WxH in pixels (e.g. 1110x1452)")
     args = parser.parse_args()
+
+    target_size = None
+    if args.size:
+        parts = args.size.lower().split("x")
+        if len(parts) != 2:
+            parser.error("--size must be WxH (e.g. 1110x1452)")
+        target_size = (int(parts[0]), int(parts[1]))
 
     if args.input and args.input.lower().endswith(".pdf"):
         dpi, quality = args.dpi, args.quality
@@ -326,11 +351,11 @@ if __name__ == "__main__":
             dpi, quality = detect_source_settings(args.input)
             print(f"Detected source settings: DPI={dpi}, JPEG quality={quality}")
         out = args.output or args.input.replace(".pdf", "_fixed.pdf")
-        process_pdf(args.input, out, dpi=dpi, quality=quality)
+        process_pdf(args.input, out, dpi=dpi, quality=quality, target_size=target_size)
     elif args.input:
         out = args.output or (args.input.rstrip("/\\") + "/processed")
         process_folder(args.input, out, dpi=args.dpi, quality=args.quality,
-                       keep_original=args.original)
+                       keep_original=args.original, target_size=target_size)
     else:
         process_folder("PDFs", "PDFs/processed", dpi=args.dpi, quality=args.quality,
-                       keep_original=args.original)
+                       keep_original=args.original, target_size=target_size)

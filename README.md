@@ -56,6 +56,7 @@ python fix_pdf.py my_scans/ my_scans/output/
 | `--dpi` | 300 | Render resolution. Higher = better quality but larger files |
 | `--quality` | 85 | JPEG compression quality (1–100) |
 | `--original` | off | Auto-detect and keep source DPI and JPEG quality |
+| `--size` | auto | Target image size as `WxH` in pixels (e.g. `1110x1452`) |
 
 **Examples:**
 
@@ -71,14 +72,50 @@ python fix_pdf.py --original
 
 # Single file with custom settings
 python fix_pdf.py scan.pdf --dpi 200 --quality 90
+
+# Match a specific page size (e.g. to replace pages in another PDF)
+python fix_pdf.py scan.pdf --size 1110x1452 --dpi 200
 ```
 
 When `--original` is used, the tool inspects each source PDF's embedded images to detect the native DPI and JPEG quality, then uses those settings for output. This avoids unnecessary downsampling or recompression.
+
+When `--size` is used, all output pages are fitted to exactly `WxH` pixels (preserving aspect ratio, centered on a white canvas). Useful when the output must match another PDF's page dimensions for page replacement.
+
+## Utility scripts
+
+### analyze_pdf.py
+
+Inspect page sizes, image dimensions, and DPI of one or more PDFs:
+
+```
+python analyze_pdf.py document.pdf
+
+python analyze_pdf.py original.pdf processed.pdf
+```
+
+### replace_pages.py
+
+Replace specific pages in a target PDF with pages from a source PDF. Page mappings use `TARGET:SOURCE` format (1-indexed):
+
+```
+# Replace pages 4, 7, 9 with source pages 1, 2, 3
+python replace_pages.py target.pdf source.pdf 4:1 7:2 9:3
+
+# Custom output filename
+python replace_pages.py target.pdf source.pdf 7:1 8:2 -o result.pdf
+
+# Skip post-replacement verification
+python replace_pages.py target.pdf source.pdf 5:1 --no-verify
+```
+
+Output defaults to `target_updated.pdf`. Automatically verifies all pages have matching dimensions after replacement.
 
 ## Project structure
 
 ```
 fix_pdf.py          - Main processing script
+analyze_pdf.py      - PDF page size analyzer
+replace_pages.py    - Page replacement utility
 requirements.txt    - Python dependencies
 PDFs/               - Input PDF files (default)
 PDFs/processed/     - Output cropped PDF files (default)
