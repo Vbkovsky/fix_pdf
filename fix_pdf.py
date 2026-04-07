@@ -91,7 +91,7 @@ def find_crop_by_edges(gray, bg_threshold=250, min_content_ratio=0.01):
     return left, top, right - left, bottom - top
 
 
-def deskew_and_crop(img):
+def deskew_and_crop(img, crop=True):
     """Rough crop -> detect angle -> rotate -> fine crop."""
     img_array = np.array(img)
     gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
@@ -100,7 +100,7 @@ def deskew_and_crop(img):
     # Step 1: Rough crop to remove white margins first
     # Keep extra margin so the fine crop + padding still has room to breathe
     bounds = find_crop_by_edges(gray)
-    if bounds is not None:
+    if bounds is not None and crop:
         rx, ry, rw, rh = bounds
         margin_x = max(int(rw * 0.05), 30)
         margin_top = max(int(rh * 0.05), 30)
@@ -141,35 +141,33 @@ def deskew_and_crop(img):
         gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
 
     # Step 4: Fine crop after rotation
-    contour = find_document_contour(gray, threshold=240)
-    if contour is not None:
-        bx, by, bw, bh = cv2.boundingRect(contour)
-        # Check if contour is reasonable (not covering entire image)
-        if (bw * bh) / (w * h) < 0.95:
-            x, y, cw, ch = bx, by, bw, bh
+    if crop:
+        contour = find_document_contour(gray, threshold=240)
+        if contour is not None:
+            bx, by, bw, bh = cv2.boundingRect(contour)
+            if (bw * bh) / (w * h) < 0.95:
+                x, y, cw, ch = bx, by, bw, bh
+            else:
+                fine = find_crop_by_edges(gray)
+                if fine is not None:
+                    x, y, cw, ch = fine
+                else:
+                    x, y, cw, ch = 0, 0, w, h
         else:
-            # Re-do edge-based crop on rotated image
             fine = find_crop_by_edges(gray)
             if fine is not None:
                 x, y, cw, ch = fine
             else:
                 x, y, cw, ch = 0, 0, w, h
-    else:
-        fine = find_crop_by_edges(gray)
-        if fine is not None:
-            x, y, cw, ch = fine
-        else:
-            x, y, cw, ch = 0, 0, w, h
 
-    # Asymmetric padding: bottom gets extra room for stamps/signatures/borders
-    pad_x = max(int(cw * 0.03), 20)
-    pad_top = max(int(ch * 0.03), 20)
-    pad_bottom = max(int(ch * 0.05), 30)
-    x1 = max(x - pad_x, 0)
-    y1 = max(y - pad_top, 0)
-    x2 = min(x + cw + pad_x, w)
-    y2 = min(y + ch + pad_bottom, h)
-    img_array = img_array[y1:y2, x1:x2]
+        pad_x = max(int(cw * 0.03), 20)
+        pad_top = max(int(ch * 0.03), 20)
+        pad_bottom = max(int(ch * 0.05), 30)
+        x1 = max(x - pad_x, 0)
+        y1 = max(y - pad_top, 0)
+        x2 = min(x + cw + pad_x, w)
+        y2 = min(y + ch + pad_bottom, h)
+        img_array = img_array[y1:y2, x1:x2]
 
     return Image.fromarray(img_array), angle
 
@@ -256,7 +254,7 @@ def detect_source_settings(input_path):
     return detected_dpi, detected_quality
 
 
-def process_pdf(input_path, output_path, dpi=300, quality=85, target_size=None):
+def process_pdf(input_path, output_path, dpi=300, quality=85, target_size=None, crop=True):
     """Process each page: deskew, crop borders, normalize to uniform size."""
     doc = fitz.open(input_path)
 
@@ -269,7 +267,7 @@ def process_pdf(input_path, output_path, dpi=300, quality=85, target_size=None):
         pix = page.get_pixmap(dpi=dpi)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-        img, angle = deskew_and_crop(img)
+        img, angle = deskew_and_crop(img, crop=crop)
         processed.append(img)
         angles.append(angle)
 
@@ -299,7 +297,7 @@ def process_pdf(input_path, output_path, dpi=300, quality=85, target_size=None):
 
 
 def process_folder(input_dir, output_dir, dpi=300, quality=85, keep_original=False,
-                    target_size=None):
+                    target_size=None, crop=True):
     """Process all PDFs in input_dir and save to output_dir."""
     import pathlib
     input_path = pathlib.Path(input_dir)
@@ -320,7 +318,7 @@ def process_folder(input_dir, output_dir, dpi=300, quality=85, keep_original=Fal
             file_dpi, file_quality = detect_source_settings(str(pdf))
             print(f"Detected source settings: DPI={file_dpi}, JPEG quality={file_quality}")
         process_pdf(str(pdf), str(out_file), dpi=file_dpi, quality=file_quality,
-                    target_size=target_size)
+                    target_size=target_size, crop=crop)
         print()
 
 
@@ -336,6 +334,8 @@ if __name__ == "__main__":
                         help="Auto-detect and keep source DPI and JPEG quality")
     parser.add_argument("--size", type=str, default=None,
                         help="Target image size as WxH in pixels (e.g. 1110x1452)")
+    parser.add_argument("--no-crop", action="store_true",
+                        help="Deskew only, skip cropping")
     args = parser.parse_args()
 
     target_size = None
@@ -351,11 +351,14 @@ if __name__ == "__main__":
             dpi, quality = detect_source_settings(args.input)
             print(f"Detected source settings: DPI={dpi}, JPEG quality={quality}")
         out = args.output or args.input.replace(".pdf", "_fixed.pdf")
-        process_pdf(args.input, out, dpi=dpi, quality=quality, target_size=target_size)
+        process_pdf(args.input, out, dpi=dpi, quality=quality,
+                    target_size=target_size, crop=not args.no_crop)
     elif args.input:
         out = args.output or (args.input.rstrip("/\\") + "/processed")
         process_folder(args.input, out, dpi=args.dpi, quality=args.quality,
-                       keep_original=args.original, target_size=target_size)
+                       keep_original=args.original, target_size=target_size,
+                       crop=not args.no_crop)
     else:
         process_folder("PDFs", "PDFs/processed", dpi=args.dpi, quality=args.quality,
-                       keep_original=args.original, target_size=target_size)
+                       keep_original=args.original, target_size=target_size,
+                       crop=not args.no_crop)

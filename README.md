@@ -110,12 +110,27 @@ python replace_pages.py target.pdf source.pdf 5:1 --no-verify
 
 Output defaults to `target_updated.pdf`. Automatically verifies all pages have matching dimensions after replacement.
 
+### rotate_pages.py
+
+Rotate specific pages in a PDF. Rotations use `PAGE:DEGREES` format (1-indexed, clockwise):
+
+```
+# Rotate pages 1-4 by 90° and page 5 by 180°
+python rotate_pages.py doc.pdf 1:90 2:90 3:90 4:90 5:180
+
+# Custom output filename
+python rotate_pages.py doc.pdf 1:90 -o result.pdf
+```
+
+Output defaults to `input_rotated.pdf`.
+
 ## Project structure
 
 ```
 fix_pdf.py          - Main processing script
 analyze_pdf.py      - PDF page size analyzer
 replace_pages.py    - Page replacement utility
+rotate_pages.py     - Page rotation utility
 requirements.txt    - Python dependencies
 PDFs/               - Input PDF files (default)
 PDFs/processed/     - Output cropped PDF files (default)
